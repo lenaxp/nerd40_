@@ -1,0 +1,140 @@
+from m5stack import *
+from m5ui import *
+from uiflow import *
+import random
+import unit
+import wifiCfg
+import socket
+import _thread as th
+setScreenColor(0x000000)
+labelWebServer = M5TextBox(240, 20, "WS", lcd.FONT_Default,0xFFFFFF, rotate=0)
+labelIpAddress = M5TextBox(300, 170, "xxx.xxx.xxx.xxx", lcd.FONT_Default,0xFFFFFF, rotate=270)
+levelPercent = 100
+ButtonInput = None
+#setting pbHub
+pbhub0 = unit.get(unit.PBHUB, unit.PORTA)
+#setting Variables for Environment Modul
+env0 = unit.get(unit.ENV, unit.PORTA)
+envTemp = None
+envPress = None
+envHum = None
+#setting Variables for Motion Sensor
+pir0 = unit.get(unit.PIR, unit.PORTB)
+pirStatus = None
+#setting Laser RX and Laser TX
+uart = None
+uartRead = None
+laserRead = None
+laserValue = None
+global i
+i = 0
+uart=machine.UART(1,rx=36,tx=26,timeout=50)
+uart.init(9600, bits=8, parity=0, stop=1)
+wifiCfg.screenShow()
+wifiCfg.autoConnect(lcdShow = True)
+def buttonA_wasPressed():
+  global ButtonInput
+  ButtonInput = 'A'
+  pass
+btnA.wasPressed(buttonA_wasPressed)
+def buttonB_wasPressed():
+  global ButtonInput
+  ButtonInput = 'B'
+  pass
+btnB.wasPressed(buttonB_wasPressed)
+def buttonC_wasPressed():
+  global ButtonInput
+  ButtonInput = 'C'
+  pass
+btnC.wasPressed(buttonC_wasPressed)
+def webServer():
+  global levelPercent, setupMode
+  web_response_json = """{"data":[{"deviceName":"Server","deviceId": "M5Stack Input","value": "Button Pressed:","ButtonPressValue": "@ButtonValue@"},
+{"deviceName":"Environment Unit:","deviceId":"Temperature","unit": "Temperature:", "value": "@Temp@"},
+{"deviceName":"Environment Unit:","deviceId":"Pressure","unit": "Pressure:", "value": "@Press@"},
+{"deviceName":"Environment Unit:","deviceId":"Humidity", "unit": "Humidity:","value": "@Hum@"}, {"deviceName":"Motion Unit:","deviceId":"@Pir@", "unit": "Bewegung","value": "Im aktuellen Raum"},
+{"deviceName":"Laser Unit:","deviceId":"@Laser@", "unit": "@LaserValue@","value": "Die Schranke"} ]}"""
+  web_error_404 = """<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN"><html><head><title>404 Not Found</title></head><body><h1>Not Found</h1><p>The requested URL was not found on this server.</p></body></html>"""
+  while True:
+    try:
+      labelIpAddress.setText('')
+      i = uart.any()
+      if (i > 0):
+        uartRead = str(uart.read())
+        laserRead ='wurde durchbrochen'
+        laserValue = 1
+      if (i <= 0):
+        uartRead = str(uart.read())
+        laserRead = 'wurde nicht durchbrochen' 
+        laserValue = 0
+      envTemp = (str(env0.temperature))
+      envPress = (str(env0.pressure))
+      envHum = (str(env0.humidity))
+      pirStatus = pbhub0.analogRead(0)
+      if not wifiCfg.wlan_sta.isconnected():
+        labelWebServer.setText('WS: RECON')
+        wifiCfg.reconnect()
+      else:
+        ip = wifiCfg.wlan_sta.ifconfig()
+        labelIpAddress.setText('IP ' + wifiCfg.wlan_sta.ifconfig()[0])
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.settimeout(30)
+        server.bind((ip[0], 80))
+        server.listen(1)
+        labelWebServer.setText('WS: RUNS') 
+        (conn, addr) = server.accept()
+        request = conn.recv(1024)
+        if request:
+          request = str(request)
+          isRequestLevel = request.find('/api/v1.0/level ') >= 0
+          if isRequestLevel:
+            labelWebServer.setText('WS: 200')
+            json = web_response_json
+            json = json.replace('@value@', str('%.2f'%levelPercent))
+            json = json.replace('@ButtonValue@', str(ButtonInput))
+            json = json.replace('@Temp@', str(envTemp))
+            json = json.replace('@Press@', str(envPress))
+            json = json.replace('@Hum@', str(envHum))
+            if pirStatus >= 1000:
+              json = json.replace('@Pir@', 'bewegt sich etwas.')
+            else:
+              json = json.replace('@Pir@', 'herrscht Ruhe.') 
+            json = json.replace('@Laser@', str(laserRead))
+            json = json.replace('@LaserValue@', str(laserValue))
+            response = json
+            conn.send('HTTP/1.1 200 OK\r\n')
+            conn.send('Content-Type: application/json\r\n')
+            conn.send('Connection: close\r\n\r\n')
+        else:
+          labelWebServer.setText('WS: 404')
+          response = web_error_404
+          conn.send('HTTP/1.1 404 NOT FOUND\r\n')
+          conn.send('Content-Type: text/html\r\n')
+          conn.send('Connection: close\r\n\r\n')
+        conn.sendall(response)
+    except Exception as e:
+      gc.collect()
+      labelWebServer.setText('WS: ERR')
+    finally:
+      try:
+        conn.close()
+        server.close()
+      except Exception as e:
+        pass
+      finally:
+        pass
+th.start_new_thread(webServer, ())
+
+
+
+
+
+
+
+
+
+
+
+
+
